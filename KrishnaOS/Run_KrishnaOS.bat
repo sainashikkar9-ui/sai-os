@@ -1,5 +1,6 @@
 @echo off
 cd /d "%~dp0"
+title Krishna OS Builder
 echo Building Krishna OS Native Terminal...
 g++ -std=c++17 krishna_gui.cpp -o KrishnaOS.exe -mwindows -luser32 -lgdi32
 if errorlevel 1 (
