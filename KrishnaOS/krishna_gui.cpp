@@ -5,6 +5,8 @@
 #include <fstream>
 #include <filesystem>
 #include <algorithm>
+#include <memory>
+#include <cctype>
 
 namespace fs = std::filesystem;
 
@@ -22,21 +24,41 @@ WNDPROC g_originalInputProc = nullptr;
 
 const COLORREF BG_COLOR     = RGB(10, 16, 30);
 const COLORREF PANEL_COLOR  = RGB(15, 25, 44);
-const COLORREF BLUE_COLOR   = RGB(75, 170, 255);
-const COLORREF CYAN_COLOR   = RGB(100, 220, 235);
-const COLORREF GREEN_COLOR  = RGB(100, 230, 150);
-const COLORREF YELLOW_COLOR = RGB(255, 205, 90);
-const COLORREF RED_COLOR    = RGB(255, 105, 115);
-const COLORREF WHITE_COLOR  = RGB(225, 235, 250);
+const COLORREF BLUE_COLOR   = RGB(0, 190, 251);
+const COLORREF CYAN_COLOR   = RGB(167, 252, 255);
+const COLORREF GREEN_COLOR  = RGB(42, 247, 0);
+const COLORREF YELLOW_COLOR = RGB(254, 237, 90);
+const COLORREF RED_COLOR    = RGB(255, 8, 27);
+const COLORREF WHITE_COLOR  = RGB(250, 255, 255);
 
-struct FileTarget
+// --- INHERITANCE: Base class for file system targets ---
+class FileSystemTarget
 {
+protected:
     std::string name;
+public:
+    explicit FileSystemTarget(std::string n) : name(std::move(n)) {}
+    virtual ~FileSystemTarget() = default;
+
+    virtual std::string getType() const = 0;
+    std::string getName() const { return name; }
+    bool isEmpty() const { return name.empty(); }
 };
 
-struct DirectoryTarget
+// Derived class for Files
+class FileTarget : public FileSystemTarget
 {
-    std::string name;
+public:
+    explicit FileTarget(std::string n) : FileSystemTarget(std::move(n)) {}
+    std::string getType() const override { return "file"; }
+};
+
+// Derived class for Directories
+class DirectoryTarget : public FileSystemTarget
+{
+public:
+    explicit DirectoryTarget(std::string n) : FileSystemTarget(std::move(n)) {}
+    std::string getType() const override { return "dir"; }
 };
 
 class Shell
@@ -44,6 +66,7 @@ class Shell
 private:
     fs::path currentPath;
 
+    // --- C++ FUNCTION: std::transform for trimming/formatting strings ---
     static std::string trim(const std::string& value)
     {
         const auto first = value.find_first_not_of(" \t\r\n");
@@ -52,82 +75,112 @@ private:
         return value.substr(first, last - first + 1);
     }
 
-    // Function overloading: the parameter type selects the file or directory operation.
-    std::string create(const FileTarget& target)
+    static std::string toLower(std::string str)
     {
-        if (target.name.empty()) return "ERROR: Usage: cr file <name>\n";
-        fs::path path = currentPath / target.name;
-        if (fs::exists(path)) return "ERROR: A file or directory with that name already exists.\n";
-
-        std::ofstream file(path);
-        if (!file) return "ERROR: Could not create file.\n";
-        return "SUCCESS: File created: " + target.name + "\n";
+        std::transform(str.begin(), str.end(), str.begin(), [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+        return str;
     }
 
-    std::string create(const DirectoryTarget& target)
+    // --- MODULAR HELPER: Target validation ---
+    bool validateTarget(const FileSystemTarget& target, const std::string& commandName, std::string& errorMsg) const
     {
-        if (target.name.empty()) return "ERROR: Usage: cr dir <name>\n";
-        if (fs::create_directory(currentPath / target.name))
-            return "SUCCESS: Directory created: " + target.name + "\n";
-        return "ERROR: Directory already exists or could not be created.\n";
+        if (target.isEmpty())
+        {
+            errorMsg = "ERROR: Usage: " + commandName + " " + target.getType() + " <name>\n";
+            return false;
+        }
+        return true;
     }
 
-    std::string remove(const FileTarget& target)
+    // --- POLYMORPHISM & TYPE CONVERSION ---
+    std::string create(const FileSystemTarget& target)
     {
-        if (target.name.empty()) return "ERROR: Usage: rm file <name>\n";
-        fs::path path = currentPath / target.name;
-        if (!fs::exists(path) || !fs::is_regular_file(path))
-            return "ERROR: File not found.\n";
-        if (fs::remove(path)) return "SUCCESS: File removed: " + target.name + "\n";
-        return "ERROR: Could not remove file.\n";
+        std::string err;
+        if (!validateTarget(target, "cr", err)) return err;
+
+        fs::path path = currentPath / target.getName();
+
+        if (dynamic_cast<const FileTarget*>(&target))
+        {
+            if (fs::exists(path)) return "ERROR: A file with that name already exists.\n";
+            std::ofstream file(path);
+            if (!file) return "ERROR: Could not create file.\n";
+            return "SUCCESS: File created: " + target.getName() + "\n";
+        }
+        else if (dynamic_cast<const DirectoryTarget*>(&target))
+        {
+            if (fs::create_directory(path))
+                return "SUCCESS: Directory created: " + target.getName() + "\n";
+            return "ERROR: Directory already exists or could not be created.\n";
+        }
+        return "ERROR: Unknown target type.\n";
     }
 
-    std::string remove(const DirectoryTarget& target)
+    std::string remove(const FileSystemTarget& target)
     {
-        if (target.name.empty()) return "ERROR: Usage: rm dir <name>\n";
-        fs::path path = currentPath / target.name;
-        if (!fs::exists(path) || !fs::is_directory(path))
-            return "ERROR: Directory not found.\n";
-        if (fs::remove(path)) return "SUCCESS: Directory removed: " + target.name + "\n";
-        return "ERROR: Directory is not empty. Remove its contents first.\n";
+        std::string err;
+        if (!validateTarget(target, "rm", err)) return err;
+
+        fs::path path = currentPath / target.getName();
+        
+        if (dynamic_cast<const FileTarget*>(&target))
+        {
+            if (!fs::exists(path) || !fs::is_regular_file(path))
+                return "ERROR: File not found.\n";
+            if (fs::remove(path)) return "SUCCESS: File removed: " + target.getName() + "\n";
+            return "ERROR: Could not remove file.\n";
+        }
+        else if (dynamic_cast<const DirectoryTarget*>(&target))
+        {
+            if (!fs::exists(path) || !fs::is_directory(path))
+                return "ERROR: Directory not found.\n";
+            if (fs::remove(path)) return "SUCCESS: Directory removed: " + target.getName() + "\n";
+            return "ERROR: Directory is not empty. Remove its contents first.\n";
+        }
+        return "ERROR: Unknown target type.\n";
     }
 
-    std::string read(const FileTarget& target)
+    std::string read(const FileSystemTarget& target)
     {
-        if (target.name.empty()) return "ERROR: Usage: rd file <name>\n";
-        fs::path path = currentPath / target.name;
-        if (!fs::exists(path) || !fs::is_regular_file(path))
-            return "ERROR: File not found.\n";
+        std::string err;
+        if (!validateTarget(target, "rd", err)) return err;
 
-        std::ifstream file(path);
-        if (!file) return "ERROR: Could not open file.\n";
+        fs::path path = currentPath / target.getName();
 
-        std::ostringstream out;
-        out << "========== FILE CONTENTS ==========\n";
-        std::string line;
-        while (std::getline(file, line)) out << line << '\n';
-        out << "===================================\n";
-        return out.str();
-    }
+        if (dynamic_cast<const FileTarget*>(&target))
+        {
+            if (!fs::exists(path) || !fs::is_regular_file(path))
+                return "ERROR: File not found.\n";
 
-    // In Krishna OS, "rd dir" means change the current working directory.
-    std::string read(const DirectoryTarget& target)
-    {
-        if (target.name.empty()) return "ERROR: Usage: rd dir <name>\n";
+            std::ifstream file(path);
+            if (!file) return "ERROR: Could not open file.\n";
 
-        fs::path destination;
-        if (target.name == "..")
-            destination = currentPath.parent_path();
-        else if (fs::path(target.name).is_absolute())
-            destination = fs::path(target.name);
-        else
-            destination = currentPath / target.name;
+            std::ostringstream out;
+            out << "========== FILE CONTENTS ==========\n";
+            std::string line;
+            while (std::getline(file, line)) out << line << '\n';
+            out << "===================================\n";
+            return out.str();
+        }
+        else if (dynamic_cast<const DirectoryTarget*>(&target))
+        {
+            fs::path destination;
+            if (target.getName() == "..")
+                destination = currentPath.parent_path();
+            else if (fs::path(target.getName()).is_absolute())
+                destination = fs::path(target.getName());
+            else
+                destination = currentPath / target.getName();
 
-        if (!fs::exists(destination) || !fs::is_directory(destination))
-            return "ERROR: Directory not found.\n";
+            if (!fs::exists(destination) || !fs::is_directory(destination))
+                return "ERROR: Directory not found.\n";
 
-        currentPath = fs::canonical(destination);
-        return "SUCCESS: Current directory changed to: " + currentPath.string() + "\n";
+            currentPath = fs::canonical(destination);
+            return "SUCCESS: Current directory changed to: " + currentPath.string() + "\n";
+        }
+        return "ERROR: Unknown target type.\n";
     }
 
 public:
@@ -144,6 +197,8 @@ public:
         std::istringstream iss(input);
         std::string command, type, name;
         iss >> command;
+        command = toLower(command); // Case-insensitive command parsing
+
         if (command.empty()) return {};
 
         if (command == "ls")
@@ -171,30 +226,28 @@ public:
         if (command == "cr" || command == "rm" || command == "rd")
         {
             iss >> type;
+            type = toLower(type);
             std::getline(iss >> std::ws, name);
             name = trim(name);
 
             if (type != "file" && type != "dir")
                 return "Usage: " + command + " file <name> OR " + command + " dir <name>\n";
-            if (name.empty())
-                return "ERROR: Usage: " + command + " " + type + " <name>\n";
 
             try
             {
+                std::unique_ptr<FileSystemTarget> target;
                 if (type == "file")
                 {
-                    FileTarget target{name};
-                    if (command == "cr") return create(target);
-                    if (command == "rm") return remove(target);
-                    return read(target); // rd file
+                    target = std::make_unique<FileTarget>(name);
                 }
                 else
                 {
-                    DirectoryTarget target{name};
-                    if (command == "cr") return create(target);
-                    if (command == "rm") return remove(target);
-                    return read(target); // rd dir
+                    target = std::make_unique<DirectoryTarget>(name);
                 }
+
+                if (command == "cr") return create(*target);
+                if (command == "rm") return remove(*target);
+                return read(*target);
             }
             catch (const fs::filesystem_error& e)
             {
@@ -219,7 +272,7 @@ public:
                 "  help                   Show this help\n"
                 "  clear                  Clear terminal output\n"
                 "  exit                   Close Krishna OS\n"
-                "\nOOP: cr, rm and rd use overloaded functions for file/directory targets.\n";
+                "\nOOP: Inheritance, polymorphism, and dynamic_cast used.\n";
         }
 
         if (command == "clear") return "__CLEAR__";
@@ -293,21 +346,17 @@ void SubmitCommand()
         return;
     }
 
-    // Display the next prompt after the command output. This also updates the
-    // prompt correctly when the user changes directories.
     AppendText(g_shell.path() + "$> ", BLUE_COLOR);
     SetFocus(g_input);
 }
 
 LRESULT CALLBACK InputProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
-    // Pressing Enter in the command field runs the command, just like EXECUTE.
     if (message == WM_KEYDOWN && wParam == VK_RETURN)
     {
         SubmitCommand();
-        return 0; // Prevent the edit control's default Enter/beep behaviour.
+        return 0;
     }
-
     return CallWindowProcA(g_originalInputProc, hwnd, message, wParam, lParam);
 }
 
@@ -345,7 +394,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_INPUT)),
             GetModuleHandleA(nullptr), nullptr);
 
-        // Subclass the input box so Enter executes the command.
         g_originalInputProc = reinterpret_cast<WNDPROC>(
             SetWindowLongPtrA(g_input, GWLP_WNDPROC,
                 reinterpret_cast<LONG_PTR>(InputProc)));
