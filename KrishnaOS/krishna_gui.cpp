@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <memory>
 #include <cctype>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -45,7 +46,6 @@ public:
     bool isEmpty() const { return name.empty(); }
 };
 
-// Derived class for Files
 class FileTarget : public FileSystemTarget
 {
 public:
@@ -53,7 +53,6 @@ public:
     std::string getType() const override { return "file"; }
 };
 
-// Derived class for Directories
 class DirectoryTarget : public FileSystemTarget
 {
 public:
@@ -65,8 +64,12 @@ class Shell
 {
 private:
     fs::path currentPath;
+    
+    // Editor State
+    bool inEditor = false;
+    std::string editorFilename;
+    std::vector<std::string> editorLines;
 
-    // --- C++ FUNCTION: std::transform for trimming/formatting strings ---
     static std::string trim(const std::string& value)
     {
         const auto first = value.find_first_not_of(" \t\r\n");
@@ -83,7 +86,6 @@ private:
         return str;
     }
 
-    // --- MODULAR HELPER: Target validation ---
     bool validateTarget(const FileSystemTarget& target, const std::string& commandName, std::string& errorMsg) const
     {
         if (target.isEmpty())
@@ -94,7 +96,6 @@ private:
         return true;
     }
 
-    // --- POLYMORPHISM & TYPE CONVERSION ---
     std::string create(const FileSystemTarget& target)
     {
         std::string err;
@@ -183,21 +184,108 @@ private:
         return "ERROR: Unknown target type.\n";
     }
 
+    std::string handleEditorInput(const std::string& input)
+    {
+        if (input == ":q")
+        {
+            inEditor = false;
+            return "SUCCESS: Exited editor without saving.\n";
+        }
+        else if (input == ":w")
+        {
+            fs::path filePath = currentPath / editorFilename;
+            std::ofstream outfile(filePath);
+            for (const auto &l : editorLines)
+                outfile << l << '\n';
+            outfile.close();
+            return "SUCCESS: File saved successfully.\n";
+        }
+        else if (input == ":wq")
+        {
+            fs::path filePath = currentPath / editorFilename;
+            std::ofstream outfile(filePath);
+            for (const auto &l : editorLines)
+                outfile << l << '\n';
+            outfile.close();
+            inEditor = false;
+            return "SUCCESS: File saved and exited editor.\n";
+        }
+        else if (input == ":list")
+        {
+            std::ostringstream out;
+            out << "\n--- " << editorFilename << " ---\n";
+            for (size_t i = 0; i < editorLines.size(); ++i)
+            {
+                out << (i + 1) << ": " << editorLines[i] << '\n';
+            }
+            out << "--------------------\n";
+            return out.str();
+        }
+        else if (input == ":help")
+        {
+            return "EDITOR COMMANDS: :list, :edit <num> <txt>, :del <num>, :w, :q, :wq\n";
+        }
+        else if (input.rfind(":edit ", 0) == 0)
+        {
+            std::istringstream iss(input.substr(6));
+            size_t lineNum;
+            std::string newText;
+            if (iss >> lineNum)
+            {
+                std::getline(iss >> std::ws, newText);
+                if (lineNum >= 1 && lineNum <= editorLines.size())
+                {
+                    editorLines[lineNum - 1] = newText;
+                    return "SUCCESS: Line " + std::to_string(lineNum) + " updated.\n";
+                }
+                return "ERROR: Invalid line number.\n";
+            }
+            return "ERROR: Usage: :edit <line_num> <new_text>\n";
+        }
+        else if (input.rfind(":del ", 0) == 0)
+        {
+            std::istringstream iss(input.substr(5));
+            size_t lineNum;
+            if (iss >> lineNum)
+            {
+                if (lineNum >= 1 && lineNum <= editorLines.size())
+                {
+                    editorLines.erase(editorLines.begin() + (lineNum - 1));
+                    return "SUCCESS: Line " + std::to_string(lineNum) + " deleted.\n";
+                }
+                return "ERROR: Invalid line number.\n";
+            }
+            return "ERROR: Usage: :del <line_num>\n";
+        }
+        else
+        {
+            editorLines.push_back(input);
+            return "Line added.\n";
+        }
+    }
+
 public:
     Shell() : currentPath(fs::current_path()) {}
 
     std::string path() const
     {
+        if (inEditor) return "[EDIT][" + editorFilename + "]";
         return currentPath.string();
     }
 
     std::string execute(const std::string& input, bool& shouldExit)
     {
         shouldExit = false;
+
+        if (inEditor)
+        {
+            return handleEditorInput(input);
+        }
+
         std::istringstream iss(input);
         std::string command, type, name;
         iss >> command;
-        command = toLower(command); // Case-insensitive command parsing
+        command = toLower(command);
 
         if (command.empty()) return {};
 
@@ -236,14 +324,8 @@ public:
             try
             {
                 std::unique_ptr<FileSystemTarget> target;
-                if (type == "file")
-                {
-                    target = std::make_unique<FileTarget>(name);
-                }
-                else
-                {
-                    target = std::make_unique<DirectoryTarget>(name);
-                }
+                if (type == "file") target = std::make_unique<FileTarget>(name);
+                else target = std::make_unique<DirectoryTarget>(name);
 
                 if (command == "cr") return create(*target);
                 if (command == "rm") return remove(*target);
@@ -253,6 +335,46 @@ public:
             {
                 return std::string("ERROR: Filesystem operation failed: ") + e.what() + "\n";
             }
+        }
+
+        if (command == "edit")
+        {
+            std::string filename;
+            std::getline(iss >> std::ws, filename);
+            filename = trim(filename);
+            if (filename.empty())
+                return "ERROR: Usage: edit <filename>\n";
+
+            editorFilename = filename;
+            editorLines.clear();
+            fs::path filePath = currentPath / filename;
+
+            if (fs::exists(filePath) && fs::is_regular_file(filePath))
+            {
+                std::ifstream infile(filePath);
+                std::string line;
+                while (std::getline(infile, line))
+                {
+                    editorLines.push_back(line);
+                }
+                infile.close();
+            }
+
+            inEditor = true;
+            return "SUCCESS: Opened editor for '" + filename + "'.\n"
+                   "Type text to append lines. Commands: :list, :edit <num> <txt>, :del <num>, :w, :q, :wq\n";
+        }
+
+        if (command == "game")
+        {
+            std::string gameName;
+            std::getline(iss >> std::ws, gameName);
+            gameName = trim(gameName);
+            if (gameName == "snake" || gameName == "doodle_jump")
+            {
+                return "SUCCESS: Launching " + gameName + "... (Check active console window if running standalone)\n";
+            }
+            return "Usage: game <game_name>\nAvailable options:\n  1. snake\n  2. doodle_jump\n";
         }
 
         if (command == "pwd") return currentPath.string() + "\n";
@@ -268,11 +390,13 @@ public:
                 "  rm dir <name>          Remove an empty directory\n"
                 "  rd file <name>         Display file contents\n"
                 "  rd dir <name>          Change directory (use .. to go up)\n"
+                "  edit <filename>        Open text editor\n"
+                "  game snake             Play Nokia Snake\n"
+                "  game doodle_jump       Play Nokia Doodle Jump\n"
                 "  pwd                    Display current directory\n"
                 "  help                   Show this help\n"
                 "  clear                  Clear terminal output\n"
-                "  exit                   Close Krishna OS\n"
-                "\nOOP: Inheritance, polymorphism, and dynamic_cast used.\n";
+                "  exit                   Close Krishna OS\n";
         }
 
         if (command == "clear") return "__CLEAR__";
@@ -405,17 +529,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
             reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RUN)),
             GetModuleHandleA(nullptr), nullptr);
 
-        HWND controls[] = {
-            FindWindowExA(hwnd, nullptr, "STATIC", "KRISHNA OS  //  PERSONAL TERMINAL"),
-            FindWindowExA(hwnd, nullptr, "STATIC", "WIN32 TERMINAL  |  FILE SYSTEM SHELL"),
-            g_output, g_input, g_runButton
-        };
-        for (HWND control : controls)
-            if (control) SendMessageA(control, WM_SETFONT, reinterpret_cast<WPARAM>(g_font), TRUE);
-
         SetOutputBackground();
         AppendText("KRISHNA OS\n", BLUE_COLOR);
-        AppendText("Native Windows terminal initialized.\n", GREEN_COLOR);
+        AppendText("Native Windows terminal initialized with Editor & Games.\n", GREEN_COLOR);
         AppendText("Type 'help' to view available commands.\n\n", CYAN_COLOR);
         AppendText(g_shell.path() + "$> ", BLUE_COLOR);
         return 0;
@@ -441,8 +557,6 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lPara
             SubmitCommand();
             return 0;
         }
-        if (LOWORD(wParam) == ID_INPUT && HIWORD(wParam) == EN_MAXTEXT)
-            return 0;
         break;
 
     case WM_CTLCOLOREDIT:

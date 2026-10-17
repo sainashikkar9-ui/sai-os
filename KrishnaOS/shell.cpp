@@ -3,6 +3,11 @@
 #include <sstream>
 #include <fstream>
 #include <filesystem>
+#include <vector>
+#include <cstdlib>
+#include <ctime>
+#include <conio.h>
+#include <windows.h>
 #include "TerminalUI.h"
 
 using namespace std;
@@ -202,6 +207,371 @@ private:
         }
     }
 
+    // --- TEXT EDITOR SYSTEM ---
+    void runEditor(const string &filename)
+    {
+        if (filename.empty())
+        {
+            cout << "Usage: edit <filename>\n";
+            return;
+        }
+
+        fs::path filePath = currentPath / filename;
+        vector<string> lines;
+
+        if (fs::exists(filePath) && fs::is_regular_file(filePath))
+        {
+            ifstream infile(filePath);
+            string line;
+            while (getline(infile, line))
+            {
+                lines.push_back(line);
+            }
+            infile.close();
+            cout << "Loaded file: " << filename << " (" << lines.size() << " lines)\n";
+        }
+        else
+        {
+            cout << "Creating new file in editor: " << filename << "\n";
+        }
+
+        cout << "\n================ KRISHNA TEXT EDITOR ================\n";
+        cout << "Commands:\n";
+        cout << "  :list            - Show all lines with numbers\n";
+        cout << "  <text>           - Append text as a new line\n";
+        cout << "  :edit <num> <txt>- Modify line number <num>\n";
+        cout << "  :del <num>       - Delete line number <num>\n";
+        cout << "  :w               - Save file\n";
+        cout << "  :q               - Quit editor without saving\n";
+        cout << "  :wq              - Save and quit\n";
+        cout << "  :help            - Show editor help\n";
+        cout << "=====================================================\n";
+
+        string input;
+        while (true)
+        {
+            cout << "[EDIT][" << filename << "]> ";
+            if (!getline(cin, input))
+                break;
+
+            if (input == ":q")
+            {
+                cout << "Exited editor without saving.\n";
+                break;
+            }
+            else if (input == ":w")
+            {
+                ofstream outfile(filePath);
+                for (const auto &l : lines)
+                    outfile << l << '\n';
+                outfile.close();
+                TerminalUI::success("File saved successfully.");
+            }
+            else if (input == ":wq")
+            {
+                ofstream outfile(filePath);
+                for (const auto &l : lines)
+                    outfile << l << '\n';
+                outfile.close();
+                TerminalUI::success("File saved and exited.");
+                break;
+            }
+            else if (input == ":list")
+            {
+                cout << "\n--- " << filename << " ---\n";
+                for (size_t i = 0; i < lines.size(); ++i)
+                {
+                    cout << (i + 1) << ": " << lines[i] << '\n';
+                }
+                cout << "--------------------\n";
+            }
+            else if (input == ":help")
+            {
+                cout << "Editor commands: :list, :edit <num> <txt>, :del <num>, :w, :q, :wq\n";
+            }
+            else if (input.rfind(":edit ", 0) == 0)
+            {
+                istringstream iss(input.substr(6));
+                size_t lineNum;
+                string newText;
+                if (iss >> lineNum)
+                {
+                    getline(iss >> ws, newText);
+                    if (lineNum >= 1 && lineNum <= lines.size())
+                    {
+                        lines[lineNum - 1] = newText;
+                        cout << "Line " << lineNum << " updated.\n";
+                    }
+                    else
+                    {
+                        cout << "Error: Invalid line number.\n";
+                    }
+                }
+                else
+                {
+                    cout << "Usage: :edit <line_num> <new_text>\n";
+                }
+            }
+            else if (input.rfind(":del ", 0) == 0)
+            {
+                istringstream iss(input.substr(5));
+                size_t lineNum;
+                if (iss >> lineNum)
+                {
+                    if (lineNum >= 1 && lineNum <= lines.size())
+                    {
+                        lines.erase(lines.begin() + (lineNum - 1));
+                        cout << "Line " << lineNum << " deleted.\n";
+                    }
+                    else
+                    {
+                        cout << "Error: Invalid line number.\n";
+                    }
+                }
+                else
+                {
+                    cout << "Usage: :del <line_num>\n";
+                }
+            }
+            else
+            {
+                lines.push_back(input);
+            }
+        }
+    }
+
+    // --- GAMES SYSTEM ---
+    void runSnakeGame()
+    {
+        cout << "\n=== NOKIA SNAKE GAME ===\n";
+        cout << "Controls: W (Up), A (Left), S (Down), D (Right), Q (Quit)\n";
+        cout << "Press any key to start...\n";
+        _getch();
+
+        int width = 20;
+        int height = 10;
+        int x = width / 2, y = height / 2;
+        int fruitX = rand() % width, fruitY = rand() % height;
+        int score = 0;
+        enum eDirection { STOP = 0, LEFT, RIGHT, UP, DOWN };
+        eDirection dir = RIGHT;
+
+        vector<pair<int, int>> tail;
+        bool gameOver = false;
+
+        while (!gameOver)
+        {
+            if (_kbhit())
+            {
+                char ch = _getch();
+                switch (ch)
+                {
+                case 'a': case 'A': if (dir != RIGHT) dir = LEFT; break;
+                case 'd': case 'D': if (dir != LEFT) dir = RIGHT; break;
+                case 'w': case 'W': if (dir != DOWN) dir = UP; break;
+                case 's': case 'S': if (dir != UP) dir = DOWN; break;
+                case 'q': case 'Q': gameOver = true; break;
+                }
+            }
+
+            int prevX = tail.empty() ? x : tail[0].first;
+            int prevY = tail.empty() ? y : tail[0].second;
+            int prev2X, prev2Y;
+            if (!tail.empty())
+            {
+                tail[0] = {x, y};
+                for (size_t i = 1; i < tail.size(); ++i)
+                {
+                    prev2X = tail[i].first;
+                    prev2Y = tail[i].second;
+                    tail[i] = {prevX, prevY};
+                    prevX = prev2X;
+                    prevY = prev2Y;
+                }
+            }
+
+            switch (dir)
+            {
+            case LEFT: x--; break;
+            case RIGHT: x++; break;
+            case UP: y--; break;
+            case DOWN: y++; break;
+            default: break;
+            }
+
+            if (x >= width || x < 0 || y >= height || y < 0)
+                gameOver = true;
+
+            for (const auto& t : tail)
+            {
+                if (t.first == x && t.second == y)
+                    gameOver = true;
+            }
+
+            if (x == fruitX && y == fruitY)
+            {
+                score += 10;
+                fruitX = rand() % width;
+                fruitY = rand() % height;
+                tail.push_back({x, y});
+            }
+
+            system("cls");
+            cout << "=== SNAKE === Score: " << score << "\n";
+            for (int i = 0; i < width + 2; i++) cout << "#";
+            cout << "\n";
+
+            for (int i = 0; i < height; i++)
+            {
+                for (int j = 0; j < width; j++)
+                {
+                    if (j == 0) cout << "#";
+                    if (i == y && j == x) cout << "O";
+                    else if (i == fruitY && j == fruitX) cout << "F";
+                    else
+                    {
+                        bool printTail = false;
+                        for (const auto& t : tail)
+                        {
+                            if (t.first == j && t.second == i)
+                            {
+                                cout << "o";
+                                printTail = true;
+                                break;
+                            }
+                        }
+                        if (!printTail) cout << " ";
+                    }
+                    if (j == width - 1) cout << "#";
+                }
+                cout << "\n";
+            }
+
+            for (int i = 0; i < width + 2; i++) cout << "#";
+            cout << "\nControls: W,A,S,D | Q to quit\n";
+
+            Sleep(150);
+        }
+        cout << "\nGame Over! Final Score: " << score << "\nPress any key to return to shell...\n";
+        _getch();
+    }
+
+    void runDoodleJumpGame()
+    {
+        cout << "\n=== DOODLE JUMP ===\n";
+        cout << "Controls: A (Left), D (Right), Q (Quit)\n";
+        cout << "Press any key to start...\n";
+        _getch();
+
+        int width = 20;
+        int height = 15;
+        int playerX = width / 2;
+        int playerY = height - 2;
+        float playerVY = 0;
+        int score = 0;
+        bool gameOver = false;
+
+        struct Platform { int x; int y; };
+        vector<Platform> platforms = {
+            {width / 2 - 2, height - 2},
+            {3, height - 5},
+            {12, height - 8},
+            {6, height - 11},
+            {10, height - 14}
+        };
+
+        srand(static_cast<unsigned int>(time(nullptr)));
+
+        while (!gameOver)
+        {
+            if (_kbhit())
+            {
+                char ch = _getch();
+                switch (ch)
+                {
+                case 'a': case 'A': playerX = max(0, playerX - 2); break;
+                case 'd': case 'D': playerX = min(width - 1, playerX + 2); break;
+                case 'q': case 'Q': gameOver = true; break;
+                }
+            }
+
+            playerVY += 0.4f;
+            playerY += static_cast<int>(playerVY);
+
+            for (auto& p : platforms)
+            {
+                if (playerVY > 0 && playerY == p.y && playerX >= p.x && playerX <= p.x + 4)
+                {
+                    playerVY = -1.2f;
+                    score += 5;
+                }
+            }
+
+            if (playerY < height / 2)
+            {
+                int diff = (height / 2) - playerY;
+                playerY = height / 2;
+                score += diff * 10;
+                for (auto& p : platforms)
+                {
+                    p.y += diff;
+                    if (p.y >= height)
+                    {
+                        p.y = 0;
+                        p.x = rand() % (width - 5);
+                    }
+                }
+            }
+
+            if (playerY >= height)
+            {
+                gameOver = true;
+            }
+
+            system("cls");
+            cout << "=== NOKIA DOODLE JUMP === Score: " << score << "\n";
+            for (int i = 0; i < width + 2; i++) cout << "-";
+            cout << "\n";
+
+            for (int i = 0; i < height; i++)
+            {
+                for (int j = 0; j < width; j++)
+                {
+                    if (j == 0) cout << "|";
+                    
+                    bool rendered = false;
+                    if (i == playerY && j == playerX)
+                    {
+                        cout << "^";
+                        rendered = true;
+                    }
+                    else
+                    {
+                        for (const auto& p : platforms)
+                        {
+                            if (i == p.y && j >= p.x && j < p.x + 5)
+                            {
+                                cout << "=";
+                                rendered = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!rendered) cout << " ";
+
+                    if (j == width - 1) cout << "|";
+                }
+                cout << "\n";
+            }
+            for (int i = 0; i < width + 2; i++) cout << "-";
+            cout << "\nControls: A, D | Q to quit\n";
+
+            Sleep(100);
+        }
+        cout << "\nGame Over! Final Score: " << score << "\nPress any key to return to shell...\n";
+        _getch();
+    }
+
 public:
     Shell() : currentPath(fs::current_path()) {}
 
@@ -238,6 +608,8 @@ public:
         TerminalUI::command("rm dir", "Remove an empty directory");
         TerminalUI::command("rd file", "Display file contents");
         TerminalUI::command("rd dir", "Change directory");
+        TerminalUI::command("edit <filename>", "Open text editor to write/edit a file");
+        TerminalUI::command("games", "Play Games");
         TerminalUI::command("pwd", "Display current directory");
         TerminalUI::command("help", "Display available commands");
         TerminalUI::command("exit", "Exit Krishna OS");
@@ -294,6 +666,30 @@ public:
                         remove(target);
                     else
                         read(target);
+                }
+            }
+            else if (command == "edit")
+            {
+                string filename;
+                getline(iss >> ws, filename);
+                filename = trim(filename);
+                runEditor(filename);
+            }
+            else if (command == "games")
+            {
+                string gameName;
+                getline(iss >> ws, gameName);
+                gameName = trim(gameName);
+                if (gameName == "snake")
+                    runSnakeGame();
+                else if (gameName == "doodle_jump")
+                    runDoodleJumpGame();
+                else
+                {
+                    cout << "<---Games--->\n";
+                    cout << "Available options:\n";
+                    cout << "  1. snake\n";
+                    cout << "  2. doodle_jump\n";
                 }
             }
             else if (command == "pwd")
